@@ -157,9 +157,20 @@ async def delete_all_online_ads(web:WebScrapingMixin, root_url:str) -> None:
 
 async def _fetch_csrf_token(web:WebScrapingMixin, root_url:str) -> str:
     await web.web_open(f"{root_url}/m-meine-anzeigen.html")
-    csrf_token = await web.web_execute(page_scripts.call("csrf_token"))
+
+    async def read_csrf_token() -> str:
+        token = await web.web_execute(page_scripts.call("csrf_token"))
+        return token.strip() if isinstance(token, str) else ""
+
+    csrf_token = await read_csrf_token()
+    if not csrf_token:
+        # Navigation can finish before the inventory page publishes its initial props.
+        try:
+            csrf_token = await web.web_await(read_csrf_token, timeout = web.timeout("quick_dom"))
+        except TimeoutError:
+            pass
     ensure(isinstance(csrf_token, str) and csrf_token.strip(), _("Expected CSRF Token not found in HTML content!"))
-    return str(csrf_token)
+    return csrf_token
 
 
 async def _request_delete(web:WebScrapingMixin, root_url:str, csrf_token:str, target_id:int, title:str) -> bool:

@@ -278,6 +278,13 @@ publishing:
   delete_old_ads_by_title: true   # match by title before publish or for ID-less deletes; ambiguous matches are skipped
 ```
 
+With `delete_old_ads: AFTER_PUBLISH`, the original is deleted only when a single,
+limited-time inventory lookup confirms the replacement is active. If it is still
+under review or the lookup fails, the original stays online and both IDs are
+logged. The local file already records the replacement ID, so the retained
+original needs manual cleanup after the replacement becomes active; later runs
+do not automatically remove it.
+
 `package_selection` applies when Kleinanzeigen presents a recognized package-selection
 step, such as the vehicle publishing flow:
 

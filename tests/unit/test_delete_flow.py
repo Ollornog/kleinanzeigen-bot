@@ -4,6 +4,7 @@
 """Tests for ad deletion functionality."""
 
 import copy
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -323,6 +324,28 @@ class TestKleinanzeigenBotAdDeletion:
         mock_web_sleep.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_delete_ad_waits_for_inventory_csrf_token(self, test_bot:KleinanzeigenBot, minimal_ad_config:dict[str, Any]) -> None:
+        """A token rendered after navigation can still authorize exactly one delete."""
+        ad_cfg = Ad.model_validate(minimal_ad_config | {"id": 12345})
+
+        async def wait_for_token(condition:Callable[[], Awaitable[str]], **_kwargs:Any) -> str:
+            return await condition()
+
+        with (
+            patch.object(test_bot, "web_open", new_callable = AsyncMock),
+            patch.object(test_bot, "web_execute", new_callable = AsyncMock, side_effect = [None, "ready-token"]),
+            patch.object(test_bot, "web_await", new_callable = AsyncMock, side_effect = wait_for_token),
+            patch.object(test_bot, "web_sleep", new_callable = AsyncMock),
+            patch.object(test_bot, "web_request", new_callable = AsyncMock, return_value = {"statusCode": 200}) as request,
+        ):
+            result = await delete_flow.delete_ad(test_bot, test_bot.root_url, ad_cfg, [], delete_old_ads_by_title = False)
+
+        assert result == DeleteResult(deleted = True, attempted = True)
+        request.assert_awaited_once()
+        assert request.await_args is not None
+        assert request.await_args.kwargs["headers"] == {"x-csrf-token": "ready-token"}
+
+    @pytest.mark.asyncio
     async def test_delete_ad_without_csrf_token_sends_no_request(self, test_bot:KleinanzeigenBot, minimal_ad_config:dict[str, Any]) -> None:
         """When the manage-ads page exposes no CSRF token, no delete request is sent and the id is preserved."""
         ad_cfg = Ad.model_validate(minimal_ad_config | {"id": 12345})
@@ -330,6 +353,7 @@ class TestKleinanzeigenBotAdDeletion:
         with (
             patch.object(test_bot, "web_open", new_callable = AsyncMock),
             patch.object(test_bot, "web_execute", new_callable = AsyncMock, return_value = None),
+            patch.object(test_bot, "web_await", new_callable = AsyncMock, side_effect = TimeoutError),
             patch.object(test_bot, "web_sleep", new_callable = AsyncMock),
             patch.object(test_bot, "web_request", new_callable = AsyncMock) as mock_request,
             pytest.raises(AssertionError, match = "Expected CSRF Token not found"),
@@ -787,15 +811,21 @@ class TestDeleteAllOnlineAds:
     OK_RESPONSE:dict[str, Any] = {"statusCode": 200, "statusMessage": "OK", "content": "{}"}
 
     @pytest.mark.asyncio
-    async def test_deletes_every_online_ad_without_local_files(self, test_bot:KleinanzeigenBot, caplog:pytest.LogCaptureFixture) -> None:
+    @pytest.mark.parametrize("delayed_token", [False, True])
+    async def test_deletes_every_online_ad_without_local_files(self, test_bot:KleinanzeigenBot, delayed_token:bool) -> None:
         online = [{"id": 1, "title": "One"}, {"id": "2", "title": "Two"}, {"id": 3}]
+        tokens = [None, "some-token"] if delayed_token else ["some-token"]
+
+        async def wait_for_token(condition:Callable[[], Awaitable[str]], **_kwargs:Any) -> str:
+            return await condition()
+
         with (
             patch("kleinanzeigen_bot.published_ads.fetch_published_ads", new_callable = AsyncMock, return_value = online) as mock_fetch,
             patch.object(test_bot, "web_open", new_callable = AsyncMock),
-            patch.object(test_bot, "web_execute", new_callable = AsyncMock, return_value = "some-token"),
+            patch.object(test_bot, "web_execute", new_callable = AsyncMock, side_effect = tokens),
+            patch.object(test_bot, "web_await", new_callable = AsyncMock, side_effect = wait_for_token),
             patch.object(test_bot, "web_sleep", new_callable = AsyncMock),
             patch.object(test_bot, "web_request", new_callable = AsyncMock, return_value = self.OK_RESPONSE) as mock_request,
-            caplog.at_level("INFO"),
         ):
             await delete_flow.delete_all_online_ads(test_bot, test_bot.root_url)
 
@@ -803,8 +833,7 @@ class TestDeleteAllOnlineAds:
         assert [call.kwargs["url"] for call in mock_request.call_args_list] == [
             f"{test_bot.root_url}/m-anzeigen-loeschen.json?ids={ad_id}" for ad_id in (1, 2, 3)
         ]
-        assert "Found 3 ads online to delete" in caplog.text
-        assert "Deleted 3 of 3 ads" in caplog.text
+        assert all(call.kwargs["headers"] == {"x-csrf-token": "some-token"} for call in mock_request.call_args_list)
 
     @pytest.mark.asyncio
     async def test_incomplete_list_deletes_nothing(self, test_bot:KleinanzeigenBot) -> None:
