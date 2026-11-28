@@ -168,7 +168,7 @@ async def _fetch_csrf_token(web:WebScrapingMixin, root_url:str) -> str:
         try:
             csrf_token = await web.web_await(read_csrf_token, timeout = web.timeout("quick_dom"))
         except TimeoutError:
-            pass
+            csrf_token = ""
     ensure(isinstance(csrf_token, str) and csrf_token.strip(), _("Expected CSRF Token not found in HTML content!"))
     return csrf_token
 
