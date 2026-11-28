@@ -210,7 +210,9 @@ async def fetch_published_ads(
         stop_after_ad_id: Stop after the page containing this ID. If absent, traverse all pages.
 
     Returns:
-        List of all published ads across all pages.
+        All published ads across all pages when no target ID is supplied. With
+        stop_after_ad_id, only the pages read through the matching page are
+        returned; strict=True does not make this bounded result a full inventory.
     """
     ads:list[PublishedAd] = []
     page = 1

@@ -157,6 +157,7 @@ async def _replacement_is_active(
         async with asyncio.timeout(web.effective_timeout("page_load")):
             ads = await published_ads.fetch_published_ads(web, root_url, strict = True, stop_after_ad_id = new_id)
     except (PublishedAdsFetchIncompleteError, TimeoutError, ProtocolException, PageScriptError, AssertionError):
+        # web_request uses ensure() (AssertionError) for unexpected HTTP statuses; keep the original on fetch failure.
         return False
     matches = [ad for ad in ads if ad_matches_id(ad, new_id)]
     return len(matches) == 1 and matches[0].get("state") == "active"
